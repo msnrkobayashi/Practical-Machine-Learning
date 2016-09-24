@@ -1,0 +1,161 @@
+---
+title: "Practical Machine Learning Course Project"
+author: "Masanori Kobayashi"
+date: "September 24, 2016"
+output: html_document
+---
+
+#1. Overview
+This document is the report for the Practical Machine Learning Course Project on Coursera.
+The main obejective of this project is to predict the manner in which six participants performed some exercise. This is the classe variable in the training set. The prediction model is created to predict 20 different test cases.
+
+#2. Background
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it. In this project, your goal will be to use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants. They were asked to perform barbell lifts correctly and incorrectly in 5 different ways. More information is available from the website here: http://groupware.les.inf.puc-rio.br/har (see the section on the Weight Lifting Exercise Dataset).
+
+Read more: http://groupware.les.inf.puc-rio.br/har#ixzz3xsbS5bVX
+
+#3. Exploratory Data Analysis
+##a) About Dataset
+The training data for this project are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+The test data are available here:
+
+https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+The data for this project come from http://groupware.les.inf.puc-rio.br/har. Full source:
+
+Velloso, E.; Bulling, A.; Gellersen, H.; Ugulino, W.; Fuks, H. Qualitative Activity Recognition of Weight Lifting Exercises. Proceedings of 4th International Conference in Cooperation with SIGCHI (Augmented Human '13)". Stuttgart, Germany: ACM SIGCHI, 2013.
+
+My special thanks to the above mentioned authors for being so generous in allowing their data to be used for this kind of assignment.
+
+A short description of the datasets content from the authors? website:
+
+Six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E).
+
+Class A corresponds to the specified execution of the exercise, while the other 4 classes correspond to common mistakes. Participants were supervised by an experienced weight lifter to make sure the execution complied to the manner they were supposed to simulate. The exercises were performed by six male participants aged between 20-28 years, with little weight lifting experience. We made sure that all participants could easily simulate the mistakes in a safe and controlled manner by using a relatively light dumbbell (1.25kg)."
+
+##b) Environmental Preperation
+First we call some R libraries which are necessary for the analysis.
+```{r echo=TRUE, results='hide', message=FALSE}
+setwd("C:/Users/msnrk/Github/coursera/datascience/PracticalMachineLearning/CourseProject")
+library(caret)
+library(corrplot)
+library(rpart)
+library(rattle)
+library(randomForest)
+library(gbm)
+library(survival)
+library(splines)
+library(parallel)
+library(plyr)
+```
+
+##c) Data Preprocessing
+The next step is to load the dataset from the given source. The training dataset is then partinioned in 2 to create a training set (70% of the data) to fit the model and a testing set (with the remaining 30%) for the validations. The pml_testing dataset is not changed and will only be used for the quiz in the end.
+
+```{r echo=TRUE}
+# Load the dataset
+pml_training <- read.csv(("./pml-training.csv"))
+pml_testing <- read.csv(("./pml-testing.csv")) # Only for the final question
+
+# Create a partition with the training dataset 
+inTrain  <- createDataPartition(pml_training$classe, p=0.7, list=FALSE)
+training <- pml_training[inTrain,]
+testing <- pml_training[-inTrain,]
+```
+
+Both created datasets contain 160 variables, some of which have plenty of NA. Those NAs can be removed via the cleaning procedures below. The Near Zero variance (nzv) variables are also removed and the ID variables as well.
+
+```{r echo=TRUE}
+# Remove variables that are mostly NA
+allNA    <- sapply(training, function(x) mean(is.na(x))) > 0.95
+training <- training[, allNA==FALSE]
+testing  <- testing[, allNA==FALSE]
+
+# Remove variables with Nearly Zero Variance
+nzv <- nearZeroVar(training)
+training <- training[, -nzv]
+testing  <- testing[, -nzv]
+
+# Remove identification only variables (columns 1 to 5)
+training <- training[, -(1:5)]
+testomg  <- testing[, -(1:5)]
+```
+
+Trhought the data cleaning process, the number of variables for the analysis has been reduced to only 54.
+
+#4. Predction Modeling
+We will apply three methods (Random Forests, Decision Tree, and Generalized Boosted Model) to model the regressions and then choose the best one based on accuracy when applied to the test dataset. That best model will be used for the quiz predictions.
+A Confusion Matrix is plotted at the end of each analysis to better visualize the accuracy of the models.
+
+##a) Random Forest
+```{r echo=TRUE}
+# model fit
+set.seed(1008)
+control_rf <- trainControl(method="cv", number=3, verboseIter=FALSE)
+mod_rf <- train(classe ~ ., data = training, method="rf",
+                          trControl=control_rf)
+mod_rf$finalModel
+
+# prediction on Test dataset
+pred_rf <- predict(mod_rf, newdata = testing)
+confMat_rf <- confusionMatrix(pred_rf, testing$classe)
+confMat_rf
+
+# plot matrix results
+plot(confMat_rf$table, col = confMat_rf$byClass, 
+     main = paste("Random Forest - Accuracy =", 
+round(confMat_rf$overall['Accuracy'], 4)))
+```
+
+##b) Decision Trees
+```{r echo=TRUE}
+# model fit
+set.seed(1008)
+mod_tr <- rpart(classe ~ ., data = training, method = "class")
+fancyRpartPlot(mod_tr)
+
+# prediction on Test dataset
+pred_tr <- predict(mod_tr, newdata = testomg, type="class")
+confMat_tr <- confusionMatrix(pred_tr, testing$classe)
+confMat_tr
+
+# plot matrix results
+plot(confMat_tr$table, col = confMat_tr$byClass, 
+     main = paste("Decision Tree - Accuracy =", 
+     round(confMat_tr$overall['Accuracy'], 4)))
+```
+
+```{r echo=TRUE}
+# model fit
+set.seed(1008)
+control_gbm <- trainControl(method = "repeatedcv", number = 5, repeats = 1)
+mod_gbm  <- train(classe ~ ., data = training, method = "gbm",
+                    trControl = control_gbm, verbose = FALSE)
+mod_gbm$finalModel
+
+# prediction on Test dataset
+pred_gbm <- predict(mod_gbm, newdata = testing)
+confMat_gbm <- confusionMatrix(pred_gbm, testing$classe)
+confMat_gbm
+
+# plot matrix results
+plot(confMat_gbm$table, col = confMat_gbm$byClass, main = paste("GBM - Accuracy =", round(confMat_gbm$overall['Accuracy'], 4)))
+```
+
+#5. Conclusion
+The accuracy of the 3 regression modeling methods above are:
+
+|            | Accuracy |
+|:-----------|:------------:|
+|Ramdom Forest|`r round(confMat_rf$overall['Accuracy'], 4)`|
+|Decision Tree|`r round(confMat_tr$overall['Accuracy'], 4)`|
+|GBM|`r round(confMat_gbm$overall['Accuracy'], 4)`|
+
+In that case, the Random Forest model will be applied to predict the 20 quiz results (testing dataset) as shown below.
+```{r pressure, echo=FALSE}
+pred_test <- predict(mod_rf, newdata = pml_testing)
+pred_test
+```
